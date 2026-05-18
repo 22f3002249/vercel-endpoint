@@ -4,7 +4,7 @@ import os
 
 app = FastAPI()
 
-# Your specific CORS headers
+# 1. SPECIFIC CORS HEADERS
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
@@ -25,6 +25,25 @@ async def add_custom_cors_headers(request: Request, call_next):
         response.headers[key] = value
     return response
 
+# 2. LINEAR INTERPOLATION PERCENTILE FUNCTION
+def calculate_p95(data):
+    if not data:
+        return 0.0
+    data.sort()
+    # (N - 1) * P gives the virtual index for linear interpolation
+    n = len(data)
+    index = (n - 1) * 0.95
+    lower = int(index)
+    upper = lower + 1
+    weight = index - lower
+    
+    if upper >= n:
+        return float(data[-1])
+    
+    # Interpolate between the two closest ranks
+    result = data[lower] * (1 - weight) + data[upper] * weight
+    return float(result)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'q-vercel-latency.json')
 
@@ -34,7 +53,6 @@ async def health_check():
 
 @app.post("/api/latency")
 async def get_metrics(payload: dict = Body(...)):
-    # Standardize input extraction
     requested_regions = payload.get("regions", [])
     threshold = payload.get("threshold_ms", 180)
     
@@ -44,27 +62,19 @@ async def get_metrics(payload: dict = Body(...)):
             
         region_metrics = {}
         for region in requested_regions:
-            # Filter rows for this specific region
             rows = [row for row in data if row.get('region') == region]
             
             if rows:
                 latencies = [row.get('latency_ms', 0) for row in rows]
-                # Your JSON data uses 'uptime_pct'
                 uptimes = [row.get('uptime_pct', 0) for row in rows]
-                
-                # Calculate P95
-                latencies.sort()
-                p95_idx = int(len(latencies) * 0.95)
-                p95_val = latencies[min(p95_idx, len(latencies)-1)]
                 
                 region_metrics[region] = {
                     "avg_latency": sum(latencies) / len(latencies),
-                    "p95_latency": float(p95_val),
+                    "p95_latency": calculate_p95(latencies),
                     "avg_uptime": sum(uptimes) / len(uptimes),
                     "breaches": sum(1 for lat in latencies if lat > threshold)
                 }
         
-        # FIX: Wrap the result in a "regions" key as requested by the error
         return {"regions": region_metrics}
 
     except Exception as e:
