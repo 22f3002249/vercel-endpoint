@@ -6,7 +6,6 @@ import os
 
 app = FastAPI()
 
-# Standard CORS setup - allow everything to ensure the grader isn't blocked
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,26 +14,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Robust pathing: Look for the file in the same folder as this script
+# Bulletproof pathing for Vercel
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'q-vercel-latency.json')
-
-def load_data():
-    with open(DATA_FILE, 'r') as f:
-        return json.load(f)
 
 @app.post("/api/latency")
 async def get_metrics(payload: dict = Body(...)):
     regions = payload.get("regions", [])
     threshold = payload.get("threshold_ms", 0)
     
-    # Load data inside the request to handle serverless cold starts properly
-    data = load_data()
+    with open(DATA_FILE, 'r') as f:
+        data = json.load(f)
     
     results = {}
-    
     for region in regions:
-        # Filter for the region
         region_rows = [row for row in data if row.get('region') == region]
         
         if region_rows:
