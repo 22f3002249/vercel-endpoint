@@ -5,58 +5,57 @@ import os
 
 app = FastAPI()
 
+# FIX CORS: allow_credentials must be False to allow the "*" wildcard
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Robust pathing
+# Robust pathing for Vercel environment
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Note: Ensure the file name matches exactly what you uploaded
 DATA_FILE = os.path.join(BASE_DIR, 'q-vercel-latency.json')
 
 @app.post("/api/latency")
 async def get_metrics(payload: dict = Body(...)):
     regions = payload.get("regions", [])
-    threshold = payload.get("threshold_ms", 0)
+    threshold = payload.get("threshold_ms", 180) # default to 180 as per instructions
     
-    # 1. Check if the file actually exists
-    if not os.path.exists(DATA_FILE):
-        return {
-            "error": "File not found",
-            "path_searched": DATA_FILE,
-            "files_in_folder": os.listdir(BASE_DIR)
-        }
-
     try:
+        # Load the JSON data
         with open(DATA_FILE, 'r') as f:
             data = json.load(f)
             
         results = {}
         for region in regions:
-            # Filter rows for this region
+            # Filter rows matching the requested region
             region_rows = [row for row in data if row.get('region') == region]
             
             if region_rows:
-                latencies = [row['latency_ms'] for row in region_rows]
-                uptimes = [row['uptime'] for row in region_rows]
+                # Extract columns based on your provided JSON schema
+                latencies = [row.get('latency_ms') for row in region_rows]
+                # Using 'uptime_pct' as found in your data snippet
+                uptimes = [row.get('uptime_pct') for row in region_rows]
                 
-                # Manual P95
+                # Calculate p95 latency: sort and take the 95th percentile index
                 latencies.sort()
-                idx = int(len(latencies) * 0.95)
-                p95 = latencies[min(idx, len(latencies)-1)]
+                p95_idx = int(len(latencies) * 0.95)
+                p95_val = latencies[min(p95_idx, len(latencies)-1)]
                 
                 results[region] = {
                     "avg_latency": sum(latencies) / len(latencies),
-                    "p95_latency": float(p95),
+                    "p95_latency": float(p95_val),
                     "avg_uptime": sum(uptimes) / len(uptimes),
                     "breaches": sum(1 for lat in latencies if lat > threshold)
                 }
+        
         return results
 
     except Exception as e:
-        # If the code crashes, it will now return the error message instead of a 500
         return {"error": "Processing error", "message": str(e)}
+
+@app.get("/")
+async def health_check():
+    return {"status": "healthy"}
