@@ -1,41 +1,45 @@
 from fastapi import FastAPI, Body, Response, Request
-from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
 
 app = FastAPI()
 
-# Standard FastAPI CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 1. Define the specific headers you provided
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Expose-Headers": "Access-Control-Allow-Origin",
+}
 
-# MANUAL CORS OVERRIDE: This ensures the evaluator sees the header even on 405 or 404 errors.
+# 2. Add custom middleware to "force-inject" these headers into EVERY response
 @app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
+async def add_custom_cors_headers(request: Request, call_next):
+    # Handle the Preflight (OPTIONS) request immediately
     if request.method == "OPTIONS":
         response = Response()
-    else:
-        response = await call_next(request)
+        for key, value in CORS_HEADERS.items():
+            response.headers[key] = value
+        return response
     
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
+    # Handle the actual request (GET or POST)
+    response = await call_next(request)
+    
+    # Add your headers to the response
+    for key, value in CORS_HEADERS.items():
+        response.headers[key] = value
+        
     return response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'q-vercel-latency.json')
 
-# FIX: Add a GET handler for the SAME URL. 
-# This prevents the "Method Not Allowed" error when the evaluator pings the URL.
+# GET handler for the same URL to prevent 405 errors during testing
 @app.get("/api/latency")
-async def latency_health():
-    return {"status": "Endpoint ready for POST requests"}
+async def health_check():
+    return {"status": "ready"}
 
+# The main POST handler
 @app.post("/api/latency")
 async def get_metrics(payload: dict = Body(...)):
     regions = payload.get("regions", [])
@@ -51,7 +55,7 @@ async def get_metrics(payload: dict = Body(...)):
             
             if region_rows:
                 latencies = [row.get('latency_ms', 0) for row in region_rows]
-                # Your data uses 'uptime_pct'
+                # Using 'uptime_pct' as found in your JSON snippet
                 uptimes = [row.get('uptime_pct', 0) for row in region_rows]
                 
                 latencies.sort()
